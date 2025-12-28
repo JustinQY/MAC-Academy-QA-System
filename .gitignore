@@ -10,6 +10,8 @@ venv/
 # Env / secrets
 .env
 config.txt
+config.json
+.streamlit/secrets.toml
 
 # Jupyter
 .ipynb_checkpoints/
