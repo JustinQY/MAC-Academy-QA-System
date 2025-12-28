@@ -12,29 +12,87 @@ st.set_page_config(page_title="学术聊天机器人", page_icon="🎓", layout=
 st.title("🎓 学术课程问答助手")
 st.markdown("基于深度学习课程材料的RAG问答系统")
 
-# 加载配置
+# 加载配置 - 支持多种方式：Streamlit Secrets、环境变量、config.json
 @st.cache_resource
 def load_config():
-    try:
-        with open("config.json", "r", encoding="utf-8") as f:
-            config = json.load(f)
+    """
+    配置加载优先级：
+    1. Streamlit Secrets（推荐用于部署）
+    2. 环境变量
+    3. config.json 文件（本地开发）
+    """
+    
+    # 获取 OpenAI API Key
+    openai_key = None
+    if hasattr(st, 'secrets') and 'OPENAI_API_KEY' in st.secrets:
+        # 方式1: Streamlit Secrets (生产环境)
+        openai_key = st.secrets['OPENAI_API_KEY']
+        source = "Streamlit Secrets"
+    elif 'OPENAI_API_KEY' in os.environ:
+        # 方式2: 环境变量
+        openai_key = os.environ['OPENAI_API_KEY']
+        source = "Environment Variable"
+    else:
+        # 方式3: config.json (本地开发)
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+            openai_key = config.get("OpenAIAPIKey")
+            source = "config.json"
+        except FileNotFoundError:
+            pass
+    
+    if not openai_key:
+        st.error("""
+        ❌ 未找到 OpenAI API Key！
         
-        # 配置OpenAI API
-        os.environ['OPENAI_API_KEY'] = config["OpenAIAPIKey"]
+        请通过以下任一方式配置：
         
-        # 配置LangSmith追踪
-        if "LangChainAPIKey" in config:
-            os.environ['LANGCHAIN_TRACING_V2'] = 'true'
-            os.environ['LANGCHAIN_ENDPOINT'] = 'https://api.smith.langchain.com'
-            os.environ['LANGCHAIN_API_KEY'] = config["LangChainAPIKey"]
+        **1. Streamlit Cloud 部署（推荐）：**
+        - 在 Streamlit Cloud 设置中添加 Secrets
+        - 格式: `OPENAI_API_KEY = "your-key-here"`
         
-        return config
-    except FileNotFoundError:
-        st.error("❌ 找不到 config.json 文件，请根据 config.example.json 创建配置文件！")
+        **2. 本地环境变量：**
+        ```bash
+        export OPENAI_API_KEY="your-key-here"
+        ```
+        
+        **3. 本地 config.json 文件：**
+        ```json
+        {
+          "OpenAIAPIKey": "your-key-here"
+        }
+        ```
+        """)
         st.stop()
-    except KeyError as e:
-        st.error(f"❌ 配置文件缺少必要的键: {e}")
-        st.stop()
+    
+    # 设置 OpenAI API Key
+    os.environ['OPENAI_API_KEY'] = openai_key
+    
+    # 获取 LangChain API Key (可选)
+    langchain_key = None
+    if hasattr(st, 'secrets') and 'LANGCHAIN_API_KEY' in st.secrets:
+        langchain_key = st.secrets['LANGCHAIN_API_KEY']
+    elif 'LANGCHAIN_API_KEY' in os.environ:
+        langchain_key = os.environ['LANGCHAIN_API_KEY']
+    else:
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+            langchain_key = config.get("LangChainAPIKey")
+        except:
+            pass
+    
+    # 配置 LangSmith 追踪（如果提供了 API Key）
+    if langchain_key:
+        os.environ['LANGCHAIN_TRACING_V2'] = 'true'
+        os.environ['LANGCHAIN_ENDPOINT'] = 'https://api.smith.langchain.com'
+        os.environ['LANGCHAIN_API_KEY'] = langchain_key
+    
+    return {
+        'source': source,
+        'langsmith_enabled': bool(langchain_key)
+    }
 
 # 初始化RAG系统
 @st.cache_resource
