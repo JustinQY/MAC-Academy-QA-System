@@ -14,3 +14,6 @@ requests
 python-dotenv
 numpy
 pypdf
+
+# Streamlit前端
+streamlit>=1.28.0
