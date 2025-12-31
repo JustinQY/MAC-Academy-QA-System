@@ -172,10 +172,19 @@ def main():
             # 检查是否已经处理过这个文件
             if 'last_processed_file' not in st.session_state:
                 st.session_state.last_processed_file = None
+                if 'last_upload_success' not in st.session_state:
+                    st.session_state.last_upload_success = None
+
             
-            if st.session_state.last_processed_file != file_identifier:
+            # 检查是否是新文件或之前上传失败的文件
+            is_new_file = st.session_state.last_processed_file != file_identifier
+            is_failed_upload = (st.session_state.last_processed_file == file_identifier and 
+                              st.session_state.last_upload_success == False)
+            
+            if is_new_file or is_failed_upload:
                 # 标记为正在处理
                 st.session_state.last_processed_file = file_identifier
+                st.session_state.last_upload_success = None  # 重置状态
                 
                 with st.spinner("⏳ 正在处理文档..."):
                     # 阶段1: 上传和保存文件
@@ -185,6 +194,7 @@ def main():
                         
                         if not success:
                             status.update(label="❌ 上传失败", state="error")
+                            st.session_state.last_upload_success = False
                             st.error(message)
                         else:
                             st.write("✅ 文件保存成功")
@@ -208,6 +218,8 @@ def main():
                                     st.info(index_message)
                                     
                                     # 清空上传器（通过 rerun）
+                                    st.session_state.last_upload_success = True
+                                    
                                     st.rerun()
                                 else:
                                     # 元数据保存失败（极少见）
