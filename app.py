@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from document_manager import DocumentManager
 from rag_system import DualVectorStoreRAG
-from utils import format_file_size, get_directory_size
+from utils import format_file_size, get_directory_size, safe_remove_file
 
 # 页面配置
 st.set_page_config(
@@ -188,26 +188,33 @@ def main():
                         )
                         
                         if index_success:
-                            # 标记为已索引
-                            doc_manager.mark_as_indexed(metadata['file_id'])
-                            status.update(label="✅ 文档处理完成", state="complete")
-                            st.success(f"🎉 {metadata['original_filename']} 已成功添加到知识库！")
-                            st.info(index_message)
+                            # 索引成功，保存元数据到持久化存储
+                            save_success, save_error = doc_manager.save_document_metadata(metadata)
                             
-                            # 清空上传器（通过 rerun）
-                            st.rerun()
+                            if save_success:
+                                status.update(label="✅ 文档处理完成", state="complete")
+                                st.success(f"🎉 {metadata['original_filename']} 已成功添加到知识库！")
+                                st.info(index_message)
+                                
+                                # 清空上传器（通过 rerun）
+                                st.rerun()
+                            else:
+                                # 元数据保存失败（极少见）
+                                status.update(label="⚠️ 元数据保存失败", state="error")
+                                st.error(f"❌ {save_error}")
+                                st.warning("文档已索引但元数据未保存，可能导致重复上传检测失败")
                         else:
-                            # 索引失败，清理已保存的文件和元数据
+                            # 索引失败，清理已保存的文件
                             status.update(label="❌ 索引失败", state="error")
                             st.error(index_message)
                             st.warning("正在清理已保存的文件...")
                             
-                            # 删除文件和元数据
-                            cleanup_success, cleanup_msg = doc_manager.delete_document(metadata['file_id'])
-                            if cleanup_success:
+                            # 删除物理文件（不需要删除元数据，因为还没保存）
+                            file_success, file_error = safe_remove_file(metadata['filepath'])
+                            if file_success:
                                 st.info("✅ 已清理失败的上传")
                             else:
-                                st.warning(f"⚠️ 清理时出现问题：{cleanup_msg}")
+                                st.warning(f"⚠️ 清理文件时出现问题：{file_error}")
                             
                             st.info("💡 提示：请检查文件是否损坏或网络连接是否正常，然后重试。")
         

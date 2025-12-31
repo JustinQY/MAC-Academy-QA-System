@@ -69,7 +69,7 @@ class DocumentManager:
         """
         检查文件是否已存在（通过哈希值）
         
-        只检查已成功索引的文件，避免误判正在上传的文件为重复
+        注意：元数据只在文件成功索引后才保存，所以这里检查的都是已索引的文件
         
         Args:
             file_content: 文件内容
@@ -81,20 +81,21 @@ class DocumentManager:
         metadata = self._load_metadata()
         
         for file_id, meta in metadata.items():
-            # 只检查已成功索引的文件
-            if meta.get('hash') == file_hash and meta.get('indexed', False):
+            if meta.get('hash') == file_hash:
                 return meta
         return None
     
     def upload_document(self, uploaded_file) -> Tuple[bool, Optional[str], Optional[Dict]]:
         """
-        上传并保存文档
+        上传并保存文档（只保存文件，不保存元数据）
+        
+        元数据将在文档成功索引后通过 save_document_metadata() 保存
         
         Args:
             uploaded_file: Streamlit UploadedFile 对象
             
         Returns:
-            (是否成功, 错误信息/成功信息, 文档元数据)
+            (是否成功, 错误信息/成功信息, 临时元数据字典)
         """
         # 1. 验证文件
         is_valid, error_msg = validate_pdf_file(uploaded_file)
@@ -107,7 +108,7 @@ class DocumentManager:
         except Exception as e:
             return False, f"❌ 无法读取文件：{str(e)}", None
         
-        # 3. 检查重复
+        # 3. 检查重复（只检查已保存元数据的文件，即已成功索引的）
         duplicate = self.check_duplicate(file_content)
         if duplicate:
             return False, f"⚠️ 文件已存在！\n文件名：{duplicate['original_filename']}\n上传时间：{duplicate['upload_time']}", None
@@ -123,25 +124,19 @@ class DocumentManager:
         except Exception as e:
             return False, f"❌ 保存文件失败：{str(e)}", None
         
-        # 6. 创建元数据
+        # 6. 创建临时元数据（不保存到文件，等索引成功后再保存）
         file_hash = calculate_file_hash(file_content)
-        metadata_entry = {
+        temp_metadata = {
             'file_id': unique_filename,
             'original_filename': uploaded_file.name,
             'filepath': filepath,
             'size': len(file_content),
             'size_formatted': format_file_size(len(file_content)),
             'hash': file_hash,
-            'upload_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'indexed': False  # 标记是否已索引到向量库
+            'upload_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # 7. 保存元数据
-        all_metadata = self._load_metadata()
-        all_metadata[unique_filename] = metadata_entry
-        self._save_metadata(all_metadata)
-        
-        return True, f"✅ 文件上传成功：{uploaded_file.name}", metadata_entry
+        return True, f"✅ 文件上传成功：{uploaded_file.name}", temp_metadata
     
     def delete_document(self, file_id: str) -> Tuple[bool, Optional[str]]:
         """
@@ -188,9 +183,30 @@ class DocumentManager:
         
         return documents
     
+    def save_document_metadata(self, metadata: Dict) -> Tuple[bool, Optional[str]]:
+        """
+        保存文档元数据到持久化存储
+        
+        应该在文档成功索引后调用此方法
+        
+        Args:
+            metadata: 文档元数据字典
+            
+        Returns:
+            (是否成功, 错误信息)
+        """
+        try:
+            all_metadata = self._load_metadata()
+            file_id = metadata['file_id']
+            all_metadata[file_id] = metadata
+            self._save_metadata(all_metadata)
+            return True, None
+        except Exception as e:
+            return False, f"保存元数据失败：{str(e)}"
+    
     def mark_as_indexed(self, file_id: str):
         """
-        标记文档为已索引
+        标记文档为已索引（已废弃，使用 save_document_metadata 代替）
         
         Args:
             file_id: 文件ID
