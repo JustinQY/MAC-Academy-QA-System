@@ -152,10 +152,11 @@ def main():
         col1, col2 = st.columns([3, 1])
         
         with col1:
-            uploaded_file = st.file_uploader(
-                "上传 PDF 文档到知识库",
+            uploaded_files = st.file_uploader(
+                "上传 PDF 文档到知识库（支持批量上传）",
                 type=['pdf'],
-                help="支持 PDF 格式，单个文件最大 50MB",
+                accept_multiple_files=True,
+                help="支持 PDF 格式，单个文件最大 50MB，可同时选择多个文件",
                 key="pdf_uploader"
             )
         
@@ -164,29 +165,70 @@ def main():
             if st.button("📚 管理已上传文档", use_container_width=True):
                 st.session_state.show_doc_manager = not st.session_state.show_doc_manager
         
-        # 处理文件上传
-        if uploaded_file is not None:
-            # 使用文件名和大小作为唯一标识，防止 st.rerun() 后重复处理
-            file_identifier = f"{uploaded_file.name}_{uploaded_file.size}"
+        # ==================== 批量文件上传处理 ====================
+        if uploaded_files is not None and len(uploaded_files) > 0:
+            # 导入批量上传辅助模块
+            from batch_upload_helper import (
+                generate_batch_id, initialize_batch_state, get_file_key,
+                update_file_status, get_pending_files, get_failed_files,
+                get_batch_progress, get_batch_summary, should_process_file
+            )
             
-            # 检查是否已经处理过这个文件
-            if 'last_processed_file' not in st.session_state:
-                st.session_state.last_processed_file = None
+            # 生成当前批次ID
+            current_batch_id = generate_batch_id(uploaded_files)
             
-            if st.session_state.last_processed_file != file_identifier:
-                # 标记为正在处理
-                st.session_state.last_processed_file = file_identifier
-                
-                with st.spinner("⏳ 正在处理文档..."):
-                    # 阶段1: 上传和保存文件
-                    with st.status("📥 正在上传文件...", expanded=True) as status:
-                        st.write("验证文件格式和大小...")
-                        success, message, metadata = doc_manager.upload_document(uploaded_file)
-                        
-                        if not success:
-                            status.update(label="❌ 上传失败", state="error")
-                            st.error(message)
-                        else:
+            # 初始化批次状态（如果是新批次）
+            if 'batch_upload_state' not in st.session_state:
+                st.session_state.batch_upload_state = None
+            
+            # 检查是否是新批次
+            if (st.session_state.batch_upload_state is None or 
+                st.session_state.batch_upload_state['batch_id'] != current_batch_id):
+                # 新批次，初始化状态
+                st.session_state.batch_upload_state = initialize_batch_state(
+                    uploaded_files, current_batch_id
+                )
+            
+            batch_state = st.session_state.batch_upload_state
+            
+            # 显示文件选择信息
+            if len(uploaded_files) > 1:
+                st.info(f"📦 已选择 {len(uploaded_files)} 个文件")
+            
+            # 显示整体进度
+            progress = get_batch_progress(batch_state)
+            if progress > 0:
+                st.progress(progress, text=get_batch_summary(batch_state))
+            
+            # 处理待处理和失败的文件
+            files_to_process = []
+            for file in uploaded_files:
+                file_key = get_file_key(file)
+                if should_process_file(batch_state, file_key):
+                    files_to_process.append((file, file_key))
+            
+            # 如果有文件需要处理
+            if files_to_process:
+                # 顺序处理每个文件
+                for file, file_key in files_to_process:
+                    file_info = batch_state['files'][file_key]
+                    
+                    # 标记为处理中
+                    update_file_status(batch_state, file_key, 'processing')
+                    
+                    with st.status(f"📥 正在处理: {file_info['filename']}", expanded=True) as status:
+                        try:
+                            # 阶段1: 上传和保存文件
+                            st.write("验证文件格式和大小...")
+                            success, message, metadata = doc_manager.upload_document(file)
+                            
+                            if not success:
+                                # 上传失败（格式错误、重复文件等）
+                                status.update(label=f"❌ {file_info['filename']} 上传失败", state="error")
+                                update_file_status(batch_state, file_key, 'failed', error=message)
+                                st.error(f"❌ {message}")
+                                continue  # 跳过这个文件，继续下一个
+                            
                             st.write("✅ 文件保存成功")
                             
                             # 阶段2: 索引到向量库
@@ -198,36 +240,83 @@ def main():
                                 file_size=metadata['size']
                             )
                             
-                            if index_success:
-                                # 索引成功，保存元数据到持久化存储
-                                save_success, save_error = doc_manager.save_document_metadata(metadata)
-                                
-                                if save_success:
-                                    status.update(label="✅ 文档处理完成", state="complete")
-                                    st.success(f"🎉 {metadata['original_filename']} 已成功添加到知识库！")
-                                    st.info(index_message)
-                                    
-                                    # 清空上传器（通过 rerun）
-                                    st.rerun()
-                                else:
-                                    # 元数据保存失败（极少见）
-                                    status.update(label="⚠️ 元数据保存失败", state="error")
-                                    st.error(f"❌ {save_error}")
-                                    st.warning("文档已索引但元数据未保存，可能导致重复上传检测失败")
-                            else:
+                            if not index_success:
                                 # 索引失败，清理已保存的文件
-                                status.update(label="❌ 索引失败", state="error")
+                                status.update(label=f"❌ {file_info['filename']} 索引失败", state="error")
                                 st.error(index_message)
                                 st.warning("正在清理已保存的文件...")
                                 
-                                # 删除物理文件（不需要删除元数据，因为还没保存）
                                 file_success, file_error = safe_remove_file(metadata['filepath'])
                                 if file_success:
                                     st.info("✅ 已清理失败的上传")
-                                else:
-                                    st.warning(f"⚠️ 清理文件时出现问题：{file_error}")
                                 
-                                st.info("💡 提示：请检查文件是否损坏或网络连接是否正常，然后重试。")
+                                update_file_status(batch_state, file_key, 'failed', error=index_message)
+                                continue  # 跳过这个文件，继续下一个
+                            
+                            # 阶段3: 保存元数据
+                            save_success, save_error = doc_manager.save_document_metadata(metadata)
+                            
+                            if not save_success:
+                                # 元数据保存失败（极少见）
+                                status.update(label=f"⚠️ {file_info['filename']} 元数据保存失败", state="error")
+                                st.error(f"❌ {save_error}")
+                                st.warning("文档已索引但元数据未保存，可能导致重复上传检测失败")
+                                update_file_status(batch_state, file_key, 'failed', error=save_error)
+                                continue
+                            
+                            # 全部成功
+                            status.update(label=f"✅ {file_info['filename']} 处理完成", state="complete")
+                            st.success(f"🎉 {metadata['original_filename']} 已成功添加到知识库！")
+                            st.info(index_message)
+                            
+                            update_file_status(batch_state, file_key, 'success')
+                            
+                        except Exception as e:
+                            # 意外错误
+                            status.update(label=f"❌ {file_info['filename']} 处理异常", state="error")
+                            error_msg = f"处理文件时发生错误: {str(e)}"
+                            st.error(error_msg)
+                            update_file_status(batch_state, file_key, 'failed', error=error_msg)
+                    
+                    # 每处理完一个文件，刷新一次页面以更新进度
+                    if batch_state['completed_files'] < batch_state['total_files']:
+                        st.rerun()
+            
+            # 批次处理完成
+            if batch_state['overall_status'] == 'completed':
+                st.markdown("---")
+                
+                # 显示批次摘要
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("✅ 成功", batch_state['success_count'])
+                with col2:
+                    st.metric("❌ 失败", batch_state['failed_count'])
+                with col3:
+                    st.metric("📊 总计", batch_state['total_files'])
+                
+                # 显示失败文件详情
+                if batch_state['failed_count'] > 0:
+                    with st.expander("查看失败文件详情", expanded=False):
+                        for file_key, file_info in batch_state['files'].items():
+                            if file_info['status'] == 'failed':
+                                st.error(f"**{file_info['filename']}**: {file_info['error']}")
+                    
+                    # 提供重试选项
+                    if st.button("🔄 重试失败的文件"):
+                        # 将失败文件重置为 pending 状态
+                        for file_key in get_failed_files(batch_state):
+                            batch_state['files'][file_key]['status'] = 'pending'
+                            batch_state['files'][file_key]['error'] = None
+                        
+                        batch_state['overall_status'] = 'processing'
+                        batch_state['failed_count'] = 0
+                        batch_state['completed_files'] -= len(get_failed_files(batch_state))
+                        st.rerun()
+                
+                # 完成后的提示
+                if batch_state['success_count'] > 0:
+                    st.success(f"🎊 批量上传完成！成功处理 {batch_state['success_count']} 个文件")
         
         # ==================== 文档管理浮窗 ====================
         if st.session_state.show_doc_manager:
