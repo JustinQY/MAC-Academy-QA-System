@@ -7,7 +7,7 @@ import os, logging
 from typing import List, Tuple, Optional
 import streamlit as st
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
+from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, UnstructuredPDFLoader
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
@@ -49,19 +49,24 @@ def loadAndIndexFiles(
     # 加载所有PDF文件
     for file_path in file_paths:
         try:
-            loader = PyPDFLoader(file_path)
-            docs = loader.load()
-            
-            # 添加元数据
+            try:
+                docs = PyPDFLoader(file_path).load()
+                loader_used = "PyPDFLoader"
+            except Exception as e1:
+                docs = UnstructuredPDFLoader(file_path).load()
+                loader_used = "UnstructuredPDFLoader"
+
             for doc in docs:
-                doc.metadata['source_type'] = source_type
+                doc.metadata["source_type"] = source_type
                 if additional_metadata:
                     doc.metadata.update(additional_metadata)
-            
+
             all_docs.extend(docs)
-        except Exception as e:
-            st.error(f"❌ 加载文件失败 {file_path}: {str(e)}")
-    
+
+        except Exception as e2:
+            st.error(f"❌ {loader_used} 加载失败 {file_path}: {e2}")
+            continue
+
     if not all_docs:
         return [], 0
     

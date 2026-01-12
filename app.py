@@ -20,7 +20,7 @@ st.set_page_config(
 )
 
 st.title("📑 McMaster Academic Knowledge QA System V1.0")
-st.markdown("Based on course materials default and uploaded by users and RAG.")
+st.markdown(f"Based on default and user uploaded course materials and RAG. \n First launch may cause a few minutes.")
 
 
 # ==================== 配置加载 ====================
