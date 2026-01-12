@@ -13,8 +13,8 @@ from utils import format_file_size, get_directory_size, safe_remove_file
 
 # 页面配置
 st.set_page_config(
-    page_title="学术聊天机器人", 
-    page_icon="🎓", 
+    page_title="MAC-AcademicQA",
+    page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded"
 )
